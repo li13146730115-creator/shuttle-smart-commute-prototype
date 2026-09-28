@@ -11,10 +11,10 @@
       exchanged: {}, redeemed: false, ticketState: 'static',
       orderTab: 'pending', refundTarget: null, payingId: null, orderSeq: 4,
       orders: [
-        { id: 'o-1', route: '海智园 1 号线', from: '园区南门', to: '软件园', time: '08:30', price: 8, status: 'completed' },
+        { id: 'o-1', route: '海智园 1 号线', from: '园区南门', to: '软件园', time: '08:30', price: 8, status: 'completed', buyTime: '2026-09-20 08:16', payTime: '2026-09-20 08:18', original: 8, discount: 3, paid: 5, operator: '通勤用户', coupon: '海智班车立减券（¥3）' },
         { id: 'o-2', route: '海智园 2 号线', from: '园区南门', to: '软件园', time: '09:10', price: 8, status: 'pending' },
         { id: 'o-3', route: '海智园 1 号线', from: '园区南门', to: '软件园', time: '08:30', price: 8, status: 'paying' },
-        { id: 'o-4', route: '海智园 2 号线', from: '园区南门', to: '软件园', time: '09:10', price: 8, status: 'invoiced' }
+        { id: 'o-4', route: '海智园 2 号线', from: '园区南门', to: '软件园', time: '09:10', price: 8, status: 'invoiced', buyTime: '2026-09-20 08:42', payTime: '2026-09-20 08:43', original: 8, discount: 0, paid: 8, operator: '通勤用户', coupon: '未使用' }
       ]
     };
   }
@@ -57,6 +57,13 @@
     return true;
   }
   function ordersByStatus(state, status) { return state.orders.filter(order => order.status === status); }
+  function ticketLedger(state) {
+    return state.orders.filter(order => !['pending', 'paying', 'refunded'].includes(order.status) && order.buyTime).map(order => ({
+      route: order.route, buyTime: order.buyTime, payTime: order.payTime,
+      original: order.original, discount: order.discount, paid: order.paid,
+      operator: order.operator, coupon: order.coupon
+    }));
+  }
   function requestRefund(state, id) {
     const order = state.orders.find(item => item.id === id && item.status === 'completed');
     if (!order) return false;
@@ -68,6 +75,19 @@
     if (!order) return false;
     order.status = 'refunded';
     state.refundTarget = null;
+    return true;
+  }
+  function exportTicketLedger(doc, rows) {
+    const headers = ['路线', '购买时间', '支付时间', '原始金额', '优惠券抵扣金额', '实付金额', '操作人', '使用的优惠券'];
+    const body = rows.map(row => [row.route, row.buyTime, row.payTime, '¥' + row.original.toFixed(2), '¥' + row.discount.toFixed(2), '¥' + row.paid.toFixed(2), row.operator, row.coupon]);
+    const table = '<table><thead><tr>' + headers.map(value => '<th>' + value + '</th>').join('') + '</tr></thead><tbody>' + body.map(row => '<tr>' + row.map(value => '<td>' + value + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
+    const anchor = doc.createElement && doc.createElement('a');
+    if (!anchor) return false;
+    anchor.href = 'data:application/vnd.ms-excel;charset=utf-8,' + encodeURIComponent('<meta charset="utf-8">' + table);
+    anchor.download = '园区班车车票台账.xls';
+    if (doc.body && doc.body.appendChild) doc.body.appendChild(anchor);
+    if (anchor.click) anchor.click();
+    if (doc.body && doc.body.removeChild) doc.body.removeChild(anchor);
     return true;
   }
   const exchangeOptions = {
@@ -93,7 +113,7 @@
     return true;
   }
   const api = { routes, createState, book, chooseCoupon, total, pay, completePayment, ordersByStatus,
-    requestRefund, confirmRefund, previewExchange, exchange, redeem };
+    ticketLedger, requestRefund, confirmRefund, previewExchange, exchange, redeem };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (!root.document) return;
   const doc = root.document;
@@ -139,6 +159,11 @@
       if (redeemButton) redeemButton.disabled = state.redeemed;
       const ledger = $('[data-ledger]');
       if (ledger) ledger.innerHTML = state.redeemed ? ledgerSeed + ledgerNew : ledgerSeed;
+      const rows = ticketLedger(state);
+      const ticketLedgerBody = $('[data-ticket-ledger]');
+      if (ticketLedgerBody) ticketLedgerBody.innerHTML = rows.map(row => '<tr><td>' + row.route + '</td><td>' + row.buyTime + '</td><td>' + row.payTime + '</td><td>¥' + row.original.toFixed(2) + '</td><td>¥' + row.discount.toFixed(2) + '</td><td>¥' + row.paid.toFixed(2) + '</td><td>' + row.operator + '</td><td>' + row.coupon + '</td></tr>').join('');
+      const ticketLedgerExport = $('[data-ticket-ledger-export]');
+      if (ticketLedgerExport) ticketLedgerExport.textContent = JSON.stringify(rows);
       return;
     }
     const order = state.order || routes['route-1'];
@@ -235,6 +260,8 @@
       const ok = redeem(state, 'haizhi');
       render();
       status(ok ? '优惠券模拟核销成功，已写入核销台账；乘车票状态不受影响。' : '此优惠券已核销，不可重复操作。');
+    } else if (action === 'export-excel') {
+      status(exportTicketLedger(doc, ticketLedger(state)) ? '车票台账已导出（演示 Excel 文件）。' : '当前环境不支持导出。');
     }
   });
   boards.forEach(board => { board.hidden = board !== current; });

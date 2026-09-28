@@ -160,6 +160,15 @@ class Pages(unittest.TestCase):
         for column in ('券码', '核销时间', '操作人'):
             self.assertIn(column, merchant)
 
+    def test_merchant_board_shows_ticket_ledger_with_excel_export(self):
+        page = (ROOT / 'desktop.html').read_text(encoding='utf-8')
+        merchant = board(page, 'data-desktop-screen="merchant-verification"')
+        self.assertIn('data-ticket-ledger', merchant)
+        for column in ('路线', '购买时间', '支付时间', '原始金额', '优惠券抵扣金额',
+                       '实付金额', '操作人', '使用的优惠券'):
+            self.assertIn(column, merchant)
+        self.assertIn('data-action="export-excel"', merchant)
+
     def test_both_exchange_buttons_open_the_same_confirmation_with_selected_id(self):
         page = (ROOT / 'mobile.html').read_text(encoding='utf-8')
         center = board(page, 'data-screen="coupon-center"')
@@ -341,6 +350,44 @@ class Business(unittest.TestCase):
         self.assertFalse(result['second'])
         self.assertEqual(result['points'], 1040)
         self.assertEqual(result['quantity'], 2)
+
+    def test_ticket_ledger_lists_only_non_refunded_orders_with_coupon_details(self):
+        result = run_ui('act("export-excel"); const data = JSON.parse(element("[data-ticket-ledger-export]").textContent); '
+                        'console.log(JSON.stringify({data}));', desktop=True)
+        rows = result['data']
+        self.assertEqual(len(rows), 2)
+        first = rows[0]
+        self.assertEqual(first['route'], '海智园 1 号线')
+        for key in ('buyTime', 'payTime', 'original', 'discount', 'paid', 'operator', 'coupon'):
+            self.assertIn(key, first)
+        self.assertFalse(any('refunded' in str(row).lower() for row in rows))
+        self.assertEqual(first['original'] - first['discount'], first['paid'])
+        self.assertTrue(all(row['buyTime'] and row['payTime'] for row in rows))
+
+    def test_ticket_ledger_excludes_refunded_and_unpaid_orders(self):
+        result = run_model('const s=Demo.createState(); '
+                           'const before=Demo.ticketLedger(s); '
+                           'Demo.requestRefund(s,"o-1"); Demo.confirmRefund(s); '
+                           'const after=Demo.ticketLedger(s); '
+                           'console.log(JSON.stringify({before:before.map(o=>o.route),after:after.map(o=>o.route)}));')
+        self.assertEqual(result['before'], ['海智园 1 号线', '海智园 2 号线'])
+        self.assertEqual(result['after'], ['海智园 2 号线'])
+
+    def test_export_excel_serves_downloadable_xls_file(self):
+        # Export must work without URL.createObjectURL (unavailable in the vm
+        # harness and unnecessary for a data-URI download), so patch the shared
+        # document with a fake anchor and assert the served .xls attributes.
+        result = run_ui('const fakeAnchor = {href:"", download:"", clicked:0, setAttribute(){}}; '
+                        'fakeAnchor.click = () => { fakeAnchor.clicked += 1; }; '
+                        'const savedCreate = document.createElement; '
+                        'document.createElement = () => fakeAnchor; '
+                        'try { act("export-excel"); } finally { document.createElement = savedCreate; } '
+                        'console.log(JSON.stringify({filename:fakeAnchor.download, '
+                        'hrefPrefix:fakeAnchor.href.split(",")[0], clicked:fakeAnchor.clicked}));',
+                        desktop=True)
+        self.assertTrue(result['filename'].endswith('.xls'))
+        self.assertIn('data:', result['hrefPrefix'])
+        self.assertEqual(result['clicked'], 1)
 
     def test_coupon_redemption_is_merchant_only_and_not_repeatable(self):
         result = run_model('const s = Demo.createState(); '
