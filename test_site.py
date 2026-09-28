@@ -135,6 +135,32 @@ class Pages(unittest.TestCase):
         self.assertIn('金卡会员兑换积分', labels)
         self.assertNotIn('张 * 明', (ROOT / 'desktop.html').read_text(encoding='utf-8'))
 
+    def test_route_cards_show_period_direction_and_drop_old_copy(self):
+        page = (ROOT / 'mobile.html').read_text(encoding='utf-8')
+        route = board(page, 'data-screen="route-query"')
+        self.assertIn('早', route)
+        self.assertIn('晚', route)
+        self.assertIn('地铁到园区', route)
+        self.assertIn('园区到地铁', route)
+        self.assertNotIn('工作日通勤线路', route)
+        self.assertNotIn('途经：', route)
+
+    def test_merchant_ticket_table_has_current_park_purchase_details(self):
+        page = (ROOT / 'desktop.html').read_text(encoding='utf-8')
+        merchant = board(page, 'data-desktop-screen="merchant-verification"')
+        for column in ('班车时间', '所属项目', '购买人', '手机号', '交易时间'):
+            self.assertIn(column, merchant)
+
+    def test_coupon_management_has_add_view_and_full_coupon_fields(self):
+        page = (ROOT / 'desktop.html').read_text(encoding='utf-8')
+        management = board(page, 'data-desktop-screen="coupon-management"')
+        for label in ('新增优惠券', '查看优惠券', '归属项目', '归属商家', '优惠券图片',
+                      '直减', '折扣', '优惠券详情', '优惠券状态'):
+            self.assertIn(label, management)
+        inputs = [a.get('aria-label') for tag, a in markup('desktop.html').attrs if tag == 'input']
+        for label in ('归属项目', '归属商家', '优惠券图片', '折扣值', '优惠券状态'):
+            self.assertIn(label, inputs)
+
     def test_coupon_selection_count_reflects_threshold_and_demo_ticket_disclaimer(self):
         page = (ROOT / 'mobile.html').read_text(encoding='utf-8')
         selection = board(page, 'data-screen="coupon-selection"')
@@ -372,6 +398,12 @@ class Business(unittest.TestCase):
                            'console.log(JSON.stringify({before:before.map(o=>o.route),after:after.map(o=>o.route)}));')
         self.assertEqual(result['before'], ['海智园 1 号线', '海智园 2 号线'])
         self.assertEqual(result['after'], ['海智园 2 号线'])
+
+    def test_ticket_ledger_exposes_purchase_identity_and_transaction_time(self):
+        result = run_model('const row=Demo.ticketLedger(Demo.createState())[0]; '
+                           'console.log(JSON.stringify(row));')
+        for key in ('project', 'buyer', 'phone', 'transactionTime', 'period', 'direction', 'time'):
+            self.assertIn(key, result)
 
     def test_export_excel_serves_downloadable_xls_file(self):
         # Export must work without URL.createObjectURL (unavailable in the vm

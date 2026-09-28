@@ -2,8 +2,8 @@
 (function (root) {
   'use strict';
   const routes = {
-    'route-1': { route: '海智园 1 号线', from: '园区南门', to: '软件园', time: '08:30', arrival: '09:05', price: 8 },
-    'route-2': { route: '海智园 2 号线', from: '园区南门', to: '软件园', time: '09:10', arrival: '09:45', price: 8 }
+    'route-1': { route: '海智园 1 号线', from: '软件园', to: '海智园', direction: '地铁到园区', period: '早', time: '08:30', arrival: '09:05', price: 8 },
+    'route-2': { route: '海智园 2 号线', from: '海智园', to: '软件园', direction: '园区到地铁', period: '晚', time: '09:10', arrival: '09:45', price: 8 }
   };
   function createState() {
     return {
@@ -11,10 +11,10 @@
       exchanged: {}, redeemed: false, ticketState: 'static',
       orderTab: 'pending', refundTarget: null, payingId: null, orderSeq: 4,
       orders: [
-        { id: 'o-1', route: '海智园 1 号线', from: '园区南门', to: '软件园', time: '08:30', price: 8, status: 'completed', buyTime: '2026-09-20 08:16', payTime: '2026-09-20 08:18', original: 8, discount: 3, paid: 5, operator: '通勤用户', coupon: '海智班车立减券（¥3）' },
-        { id: 'o-2', route: '海智园 2 号线', from: '园区南门', to: '软件园', time: '09:10', price: 8, status: 'pending' },
-        { id: 'o-3', route: '海智园 1 号线', from: '园区南门', to: '软件园', time: '08:30', price: 8, status: 'paying' },
-        { id: 'o-4', route: '海智园 2 号线', from: '园区南门', to: '软件园', time: '09:10', price: 8, status: 'invoiced', buyTime: '2026-09-20 08:42', payTime: '2026-09-20 08:43', original: 8, discount: 0, paid: 8, operator: '通勤用户', coupon: '未使用' }
+        { id: 'o-1', route: '海智园 1 号线', from: '软件园', to: '海智园', direction: '地铁到园区', period: '早', time: '08:30', price: 8, status: 'completed', buyTime: '2026-09-20 08:16', payTime: '2026-09-20 08:18', transactionTime: '2026-09-20 08:18', original: 8, discount: 3, paid: 5, operator: '通勤用户', buyer: '李明', phone: '138****8216', project: '海智园通勤项目', coupon: '海智班车立减券（¥3）' },
+        { id: 'o-2', route: '海智园 2 号线', from: '海智园', to: '软件园', direction: '园区到地铁', period: '晚', time: '09:10', price: 8, status: 'pending' },
+        { id: 'o-3', route: '海智园 1 号线', from: '软件园', to: '海智园', direction: '地铁到园区', period: '早', time: '08:30', price: 8, status: 'paying' },
+        { id: 'o-4', route: '海智园 2 号线', from: '海智园', to: '软件园', direction: '园区到地铁', period: '晚', time: '09:10', price: 8, status: 'invoiced', buyTime: '2026-09-20 08:42', payTime: '2026-09-20 08:43', transactionTime: '2026-09-20 08:43', original: 8, discount: 0, paid: 8, operator: '通勤用户', buyer: '王芳', phone: '139****4502', project: '海智园通勤项目', coupon: '未使用' }
       ]
     };
   }
@@ -59,8 +59,10 @@
   function ordersByStatus(state, status) { return state.orders.filter(order => order.status === status); }
   function ticketLedger(state) {
     return state.orders.filter(order => !['pending', 'paying', 'refunded'].includes(order.status) && order.buyTime).map(order => ({
-      route: order.route, buyTime: order.buyTime, payTime: order.payTime,
+      route: order.route, time: order.time, period: order.period, direction: order.direction,
+      buyTime: order.buyTime, payTime: order.payTime, transactionTime: order.transactionTime,
       original: order.original, discount: order.discount, paid: order.paid,
+      project: order.project, buyer: order.buyer, phone: order.phone,
       operator: order.operator, coupon: order.coupon
     }));
   }
@@ -78,8 +80,8 @@
     return true;
   }
   function exportTicketLedger(doc, rows) {
-    const headers = ['路线', '购买时间', '支付时间', '原始金额', '优惠券抵扣金额', '实付金额', '操作人', '使用的优惠券'];
-    const body = rows.map(row => [row.route, row.buyTime, row.payTime, '¥' + row.original.toFixed(2), '¥' + row.discount.toFixed(2), '¥' + row.paid.toFixed(2), row.operator, row.coupon]);
+    const headers = ['路线', '班车时间', '方向', '购买时间', '支付时间', '交易时间', '原始金额', '优惠券抵扣金额', '实付金额', '所属项目', '购买人', '手机号', '操作人', '使用的优惠券'];
+    const body = rows.map(row => [row.route, row.time, row.direction, row.buyTime, row.payTime, row.transactionTime, '¥' + row.original.toFixed(2), '¥' + row.discount.toFixed(2), '¥' + row.paid.toFixed(2), row.project, row.buyer, row.phone, row.operator, row.coupon]);
     const table = '<table><thead><tr>' + headers.map(value => '<th>' + value + '</th>').join('') + '</tr></thead><tbody>' + body.map(row => '<tr>' + row.map(value => '<td>' + value + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
     const anchor = doc.createElement && doc.createElement('a');
     if (!anchor) return false;
@@ -256,6 +258,10 @@
       }
     } else if (action === 'draft' || action === 'publish') {
       status((action === 'draft' ? '草稿已模拟保存' : '优惠券已模拟发布') + '；无真实后台写入，刷新页面后重置。');
+    } else if (action === 'view-coupons') {
+      status('已加载当前园区优惠券（演示数据）；未连接真实后台。');
+    } else if (action === 'add-coupon') {
+      status('已打开新增优惠券表单（演示）；填写后点击确认发布即可模拟提交。');
     } else if (action === 'redeem') {
       const ok = redeem(state, 'haizhi');
       render();
