@@ -6,6 +6,11 @@ import unittest
 
 ROOT = pathlib.Path(__file__).parent
 
+MOBILE_SCREENS = ['route-query', 'order-confirmation', 'payment-success', 'purchase-success',
+                  'order-center', 'coupon-selection', 'coupon-center', 'exchange-confirmation',
+                  'my-coupons', 'boarding-ticket', 'refund']
+DESKTOP_SCREENS = ['coupon-management', 'merchant-verification']
+
 
 class Markup(html.parser.HTMLParser):
     def __init__(self):
@@ -20,6 +25,10 @@ def markup(name):
     doc = Markup()
     doc.feed((ROOT / name).read_text(encoding='utf-8'))
     return doc
+
+
+def board(page, marker):
+    return page.split(marker, 1)[1].split('</article>', 1)[0]
 
 
 def run_ui(script, desktop=False):
@@ -44,10 +53,9 @@ function act(action, extras={}) {const button={dataset:{action,...extras},disabl
   click({target:{closest(){return button}}}); return button;}
 function nav(name) {const button={dataset:{nav:name},disabled:false};
   click({target:{closest(){return button}}});}
-''' % (json.dumps(['coupon-management', 'shuttle-rules', 'merchant-verification'] if desktop else
-                     ['route-query', 'order-confirmation', 'coupon-selection', 'coupon-center',
-                      'exchange-confirmation', 'my-coupons', 'boarding-ticket']),
-          'true' if desktop else 'false')
+function otab(name) {const button={dataset:{orderTab:name},disabled:false};
+  click({target:{closest(){return button}}});}
+''' % (json.dumps(DESKTOP_SCREENS if desktop else MOBILE_SCREENS), 'true' if desktop else 'false')
     process = subprocess.run(['node', '-e', fixture + script], cwd=ROOT,
                              text=True, capture_output=True, check=True)
     return json.loads(process.stdout)
@@ -66,19 +74,57 @@ class Pages(unittest.TestCase):
         self.assertEqual(links, ['mobile.html', 'desktop.html'])
         self.assertNotIn('LEGACY CONTENT', page)
 
-    def test_mobile_preserves_seven_393_by_852_screens(self):
+    def test_mobile_preserves_393_by_852_screens_with_closed_loop(self):
         doc = markup('mobile.html')
         screens = [a['data-screen'] for tag, a in doc.attrs if tag == 'article' and 'data-screen' in a]
-        self.assertEqual(screens, ['route-query', 'order-confirmation', 'coupon-selection',
-                                   'coupon-center', 'exchange-confirmation', 'my-coupons', 'boarding-ticket'])
-        self.assertIn('393px', (ROOT / 'styles.css').read_text())
-        self.assertIn('852px', (ROOT / 'styles.css').read_text())
+        self.assertEqual(screens, MOBILE_SCREENS)
+        css = (ROOT / 'styles.css').read_text(encoding='utf-8')
+        self.assertIn('393px', css)
+        self.assertIn('852px', css)
 
-    def test_desktop_preserves_three_1920_by_1080_screens(self):
+    def test_mobile_uses_real_page_navigation_without_top_tabs(self):
+        page = (ROOT / 'mobile.html').read_text(encoding='utf-8')
+        self.assertNotIn('screen-nav', page)
+        route = board(page, 'data-screen="route-query"')
+        self.assertIn('data-nav="order-center"', route)
+        self.assertIn('data-nav="my-coupons"', route)
+        confirm = board(page, 'data-screen="order-confirmation"')
+        self.assertIn('data-nav="route-query"', confirm)
+        self.assertIn('data-action="pay"', confirm)
+
+    def test_payment_and_purchase_success_pages_chain_forward(self):
+        page = (ROOT / 'mobile.html').read_text(encoding='utf-8')
+        payment = board(page, 'data-screen="payment-success"')
+        self.assertIn('data-action="payment-done"', payment)
+        self.assertIn('data-pay-amount', payment)
+        purchase = board(page, 'data-screen="purchase-success"')
+        self.assertIn('data-nav="boarding-ticket"', purchase)
+        self.assertIn('data-nav="order-center"', purchase)
+
+    def test_order_center_has_four_status_tabs_and_refund_page_rule(self):
+        page = (ROOT / 'mobile.html').read_text(encoding='utf-8')
+        center = board(page, 'data-screen="order-center"')
+        doc = Markup()
+        doc.feed(center)
+        tabs = [a.get('data-order-tab') for tag, a in doc.attrs if tag == 'button' and 'data-order-tab' in a]
+        self.assertEqual(tabs, ['pending', 'paying', 'completed', 'invoiced'])
+        for label in ('待支付', '支付中', '已完成', '已开票'):
+            self.assertIn(label, center)
+        self.assertIn('data-order-list', center)
+        refund = board(page, 'data-screen="refund"')
+        self.assertIn('data-action="refund-confirm"', refund)
+        self.assertIn('发车前 30 分钟', refund)
+        self.assertIn('data-refund-route', refund)
+
+    def test_desktop_drops_rules_page_and_hardcodes_rules(self):
         doc = markup('desktop.html')
         screens = [a['data-desktop-screen'] for tag, a in doc.attrs if tag == 'article' and 'data-desktop-screen' in a]
-        self.assertEqual(screens, ['coupon-management', 'shuttle-rules', 'merchant-verification'])
-        css = (ROOT / 'styles.css').read_text()
+        self.assertEqual(screens, DESKTOP_SCREENS)
+        page = (ROOT / 'desktop.html').read_text(encoding='utf-8')
+        self.assertNotIn('screen-nav', page)
+        self.assertNotIn('shuttle-rules', page)
+        self.assertIn('发车前 30 分钟', page)
+        css = (ROOT / 'styles.css').read_text(encoding='utf-8')
         self.assertIn('1920px', css)
         self.assertIn('1080px', css)
 
@@ -86,40 +132,41 @@ class Pages(unittest.TestCase):
         doc = markup('desktop.html')
         labels = [a.get('aria-label') for tag, a in doc.attrs if tag == 'input']
         self.assertIn('优惠券名称', labels)
-        self.assertIn('发车前分钟数', labels)
         self.assertIn('金卡会员兑换积分', labels)
         self.assertNotIn('张 * 明', (ROOT / 'desktop.html').read_text(encoding='utf-8'))
 
     def test_coupon_selection_count_reflects_threshold_and_demo_ticket_disclaimer(self):
         page = (ROOT / 'mobile.html').read_text(encoding='utf-8')
-        selection = page.split('data-screen="coupon-selection"', 1)[1].split('</article>', 1)[0]
+        selection = board(page, 'data-screen="coupon-selection"')
         self.assertIn('<span class="active">可使用 1</span>', selection)
         self.assertIn('<span>不可使用 1</span>', selection)
         self.assertIn('不读取服务端时间', page)
 
     def test_each_desktop_sidebar_has_keyboard_operable_navigation(self):
         page = (ROOT / 'desktop.html').read_text(encoding='utf-8')
-        destinations = ['coupon-management', 'shuttle-rules', 'merchant-verification']
-        for board in page.split('<article class="desktop-board"')[1:]:
-            sidebar = board.split('</aside>', 1)[0]
+        for board_html in page.split('<article class="desktop-board"')[1:]:
+            sidebar = board_html.split('</aside>', 1)[0]
             doc = Markup()
             doc.feed(sidebar)
-            self.assertEqual([a.get('data-nav') for tag, a in doc.attrs if tag == 'button'], destinations)
+            self.assertEqual([a.get('data-nav') for tag, a in doc.attrs if tag == 'button'], DESKTOP_SCREENS)
             self.assertFalse(any(tag == 'span' for tag, _ in doc.attrs))
 
-    def test_redemption_badge_and_remaining_count_have_render_targets(self):
+    def test_merchant_board_has_badge_remaining_and_ledger(self):
         page = (ROOT / 'desktop.html').read_text(encoding='utf-8')
-        merchant = page.split('data-desktop-screen="merchant-verification"', 1)[1].split('</article>', 1)[0]
+        merchant = board(page, 'data-desktop-screen="merchant-verification"')
         self.assertIn('data-redeem-badge', merchant)
         self.assertIn('data-redeem-remaining', merchant)
+        self.assertIn('data-ledger', merchant)
+        for column in ('券码', '核销时间', '操作人'):
+            self.assertIn(column, merchant)
 
     def test_both_exchange_buttons_open_the_same_confirmation_with_selected_id(self):
         page = (ROOT / 'mobile.html').read_text(encoding='utf-8')
-        center = page.split('data-screen="coupon-center"', 1)[1].split('</article>', 1)[0]
+        center = board(page, 'data-screen="coupon-center"')
         doc = Markup()
         doc.feed(center)
         self.assertEqual([a.get('data-exchange-id') for tag, a in doc.attrs if a.get('data-action') == 'exchange-preview'], ['three', 'five'])
-        confirm = page.split('data-screen="exchange-confirmation"', 1)[1].split('</article>', 1)[0]
+        confirm = board(page, 'data-screen="exchange-confirmation"')
         for target in ('data-exchange-name', 'data-exchange-value', 'data-exchange-cost',
                        'data-points-before', 'data-points-after', 'data-exchange-confirm'):
             self.assertIn(target, confirm)
@@ -143,17 +190,42 @@ class Pages(unittest.TestCase):
 
 
 class Business(unittest.TestCase):
-    def test_no_coupon_selection_or_submission_before_booking(self):
+    def test_no_coupon_selection_or_payment_before_booking(self):
         result = run_model('const s = Demo.createState(); '
                            'const choose = Demo.chooseCoupon(s,"three"); '
                            'const none = Demo.chooseCoupon(s,null); '
-                           'const submit = Demo.submit(s); '
-                           'console.log(JSON.stringify({choose,none,submit,order:s.order,coupon:s.selectedCoupon}));')
+                           'const pay = Demo.pay(s); '
+                           'console.log(JSON.stringify({choose,none,pay,order:s.order,coupon:s.selectedCoupon}));')
         self.assertFalse(result['choose'])
         self.assertFalse(result['none'])
-        self.assertFalse(result['submit'])
+        self.assertFalse(result['pay'])
         self.assertIsNone(result['order'])
         self.assertIsNone(result['coupon'])
+
+    def test_payment_flow_moves_order_through_paying_to_completed(self):
+        result = run_model('const s = Demo.createState(); Demo.book(s,"route-1"); const paid = Demo.pay(s); '
+                           'const order = Demo.ordersByStatus(s,"paying").find(o=>o.paid===5); '
+                           'const done = Demo.completePayment(s); '
+                           'const completed = Demo.ordersByStatus(s,"completed").map(o=>o.id); '
+                           'console.log(JSON.stringify({paid,done,id:order.id,paidAmount:order.paid,completed}));')
+        self.assertTrue(result['paid'])
+        self.assertTrue(result['done'])
+        self.assertEqual(result['id'], 'o-5')
+        self.assertEqual(result['paidAmount'], 5)
+        self.assertEqual(result['completed'], ['o-1', 'o-5'])
+
+    def test_refund_only_for_completed_orders_and_only_once(self):
+        result = run_model('const s = Demo.createState(); '
+                           'const invoiced = Demo.requestRefund(s,"o-4"); '
+                           'const ask = Demo.requestRefund(s,"o-1"); '
+                           'const refund = Demo.confirmRefund(s); const again = Demo.confirmRefund(s); '
+                           'const after = Demo.ordersByStatus(s,"completed").map(o=>o.id); '
+                           'console.log(JSON.stringify({invoiced,ask,refund,again,after}));')
+        self.assertFalse(result['invoiced'])
+        self.assertTrue(result['ask'])
+        self.assertTrue(result['refund'])
+        self.assertFalse(result['again'])
+        self.assertEqual(result['after'], [])
 
     def test_confirmation_preview_matches_selected_coupon_and_changes_after_redemption(self):
         result = run_model('const s = Demo.createState(); '
@@ -177,6 +249,17 @@ class Business(unittest.TestCase):
         self.assertEqual(result['first'], {'badge': '已核销', 'remaining': '372 张', 'disabled': True})
         self.assertEqual(result['remaining'], '372 张')
 
+    def test_redeem_appends_ledger_row_once(self):
+        result = run_ui('const before = element("[data-ledger]").innerHTML; '
+                        'act("redeem"); act("redeem"); '
+                        'const after = element("[data-ledger]").innerHTML; '
+                        'console.log(JSON.stringify({beforeHasNew: before.includes("CPN 826 193"), '
+                        'afterHasNew: after.includes("CPN 826 193"), '
+                        'rows: (after.match(/<tr>/g) || []).length}));', desktop=True)
+        self.assertFalse(result['beforeHasNew'])
+        self.assertTrue(result['afterHasNew'])
+        self.assertEqual(result['rows'], 3)
+
     def test_exchange_confirmation_only_consumes_selected_id_once(self):
         result = run_ui('act("exchange-preview",{exchangeId:"five"}); '
                         'const preview={screen:boards.find(b=>!b.hidden).getAttribute(), '
@@ -192,14 +275,43 @@ class Business(unittest.TestCase):
                                              'cost': '400 积分', 'before': '1,280', 'after': '880'})
         self.assertEqual((result['points'], result['five'], result['three']), ('880', '2', '1'))
 
-    def test_no_prebooking_submit_or_coupon_navigation(self):
+    def test_no_prebooking_payment_or_coupon_navigation(self):
         result = run_ui('act("select-coupon"); const couponScreen=boards.find(b=>!b.hidden).getAttribute(); '
-                        'act("submit"); console.log(JSON.stringify({couponScreen, '
-                        'submitDisabled:element(\'[data-action="submit"]\').disabled, '
+                        'act("pay"); console.log(JSON.stringify({couponScreen, '
+                        'payScreen:boards.find(b=>!b.hidden).getAttribute(), '
+                        'payDisabled:element(\'[data-action="pay"]\').disabled, '
                         'status:element("#demo-status").textContent}));')
         self.assertEqual(result['couponScreen'], 'route-query')
-        self.assertTrue(result['submitDisabled'])
-        self.assertNotIn('提交成功', result['status'])
+        self.assertEqual(result['payScreen'], 'route-query')
+        self.assertTrue(result['payDisabled'])
+        self.assertNotIn('支付成功', result['status'])
+
+    def test_booking_to_payment_success_to_purchase_and_order_center(self):
+        result = run_ui('act("book",{route:"route-1"}); const booked=boards.find(b=>!b.hidden).getAttribute(); '
+                        'act("pay"); const paying={screen:boards.find(b=>!b.hidden).getAttribute(), '
+                        'amount:element("[data-pay-amount]").textContent}; '
+                        'act("payment-done"); const purchased=boards.find(b=>!b.hidden).getAttribute(); '
+                        'nav("order-center"); const center=boards.find(b=>!b.hidden).getAttribute(); '
+                        'const pendingList=element("[data-order-list]").innerHTML; '
+                        'otab("completed"); const completedList=element("[data-order-list]").innerHTML; '
+                        'act("refund",{orderId:"o-1"}); const refundScreen=boards.find(b=>!b.hidden).getAttribute(); '
+                        'const refundRoute=element("[data-refund-route]").textContent; '
+                        'act("refund-confirm"); const afterRefund=boards.find(b=>!b.hidden).getAttribute(); '
+                        'otab("completed"); const completedAfter=element("[data-order-list]").innerHTML; '
+                        'console.log(JSON.stringify({booked,paying,purchased,center,pendingList,completedList,'
+                        'refundScreen,refundRoute,afterRefund,completedAfter}));')
+        self.assertEqual(result['booked'], 'order-confirmation')
+        self.assertEqual(result['paying'], {'screen': 'payment-success', 'amount': '¥5.00'})
+        self.assertEqual(result['purchased'], 'purchase-success')
+        self.assertEqual(result['center'], 'order-center')
+        self.assertIn('去支付', result['pendingList'])
+        self.assertIn('data-order-id="o-2"', result['pendingList'])
+        self.assertIn('申请退票', result['completedList'])
+        self.assertIn('data-order-id="o-1"', result['completedList'])
+        self.assertEqual(result['refundScreen'], 'refund')
+        self.assertEqual(result['refundRoute'], '海智园 1 号线')
+        self.assertEqual(result['afterRefund'], 'order-center')
+        self.assertNotIn('data-order-id="o-1"', result['completedAfter'])
 
     def test_booking_transfers_each_route_and_coupon_updates_total(self):
         result = run_model('const s = Demo.createState(); '
