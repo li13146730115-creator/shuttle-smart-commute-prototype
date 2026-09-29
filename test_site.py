@@ -8,7 +8,8 @@ ROOT = pathlib.Path(__file__).parent
 
 MOBILE_SCREENS = ['route-query', 'order-confirmation', 'payment-success', 'purchase-success',
                   'paying-order-detail', 'order-center', 'coupon-selection', 'coupon-center',
-                  'exchange-confirmation', 'my-coupons', 'boarding-ticket', 'refund', 'date-picker']
+                  'exchange-confirmation', 'my-coupons', 'boarding-ticket', 'refund',
+                  'invoice-application', 'date-picker']
 DESKTOP_SCREENS = ['coupon-list', 'coupon-create', 'ticket-ledger']
 
 
@@ -148,6 +149,22 @@ class Pages(unittest.TestCase):
         self.assertIn('data-action="refund-confirm"', refund)
         self.assertIn('发车前 30 分钟', refund)
         self.assertIn('data-refund-route', refund)
+
+    def test_invoice_application_screen_has_title_selection_and_submit(self):
+        page = (ROOT / 'mobile.html').read_text(encoding='utf-8')
+        invoice = board(page, 'data-screen="invoice-application"')
+        self.assertIn('发票抬头', invoice)
+        self.assertIn('data-action="invoice-submit"', invoice)
+        self.assertIn('data-invoice-route', invoice)
+        self.assertIn('data-nav="order-center"', invoice)
+        doc = Markup()
+        doc.feed(invoice)
+        titles = [a.get('data-title') for tag, a in doc.attrs if a.get('data-action') == 'invoice-title']
+        self.assertEqual(titles, ['personal', 'company'])
+        self.assertIn('data-invoice-title-personal', invoice)
+        self.assertIn('data-invoice-title-company', invoice)
+        app = (ROOT / 'app.js').read_text(encoding='utf-8')
+        self.assertIn('data-action="request-invoice"', app)
 
     def test_desktop_drops_rules_page_and_hardcodes_rules(self):
         doc = markup('desktop.html')
@@ -300,6 +317,14 @@ class Redesign(unittest.TestCase):
         self.assertEqual(sum(a.get('data-nav') == 'coupon-list' for tag, a in doc.attrs), 2)
         for label in ('归属项目', '归属商家', '优惠券图片', '折扣值', '优惠券状态', '优惠券名称', '金卡会员兑换积分'):
             self.assertIn(label, page)
+
+    def test_coupon_create_form_is_compact_data_dense(self):
+        css = (ROOT / 'styles.css').read_text(encoding='utf-8')
+        form_row = css.split('.form-row{', 1)[1].split('}', 1)[0]
+        self.assertIn('grid-template-columns', form_row)
+        self.assertIn('112px', form_row)
+        for token in ('.form-label{', '.create-section{', '.create-footer{', '.upload-box{', '.section-eyebrow{'):
+            self.assertIn(token, css)
 
 
 class Business(unittest.TestCase):
@@ -516,6 +541,43 @@ class Business(unittest.TestCase):
         self.assertTrue(result['first'])
         self.assertFalse(result['again'])
         self.assertTrue(result['redeemed'])
+
+    def test_invoice_request_only_for_completed_orders_and_only_once(self):
+        result = run_model('const s = Demo.createState(); '
+                           'const pending = Demo.requestInvoice(s,"o-2"); '
+                           'const invoiced = Demo.requestInvoice(s,"o-4"); '
+                           'const ask = Demo.requestInvoice(s,"o-1"); '
+                           'const submit = Demo.confirmInvoice(s); const again = Demo.confirmInvoice(s); '
+                           'const after = Demo.ordersByStatus(s,"invoiced").map(o=>o.id); '
+                           'console.log(JSON.stringify({pending,invoiced,ask,submit,again,after}));')
+        self.assertFalse(result['pending'])
+        self.assertFalse(result['invoiced'])
+        self.assertTrue(result['ask'])
+        self.assertTrue(result['submit'])
+        self.assertFalse(result['again'])
+        self.assertEqual(result['after'], ['o-1', 'o-4'])
+
+    def test_invoice_ui_flow_selects_title_and_submits_from_order_center(self):
+        result = run_ui('nav("order-center"); otab("completed"); '
+                        'const completedList=element("[data-order-list]").innerHTML; '
+                        'act("request-invoice",{orderId:"o-1"}); '
+                        'const screen=boards.find(b=>!b.hidden).getAttribute(); '
+                        'const route=element("[data-invoice-route]").textContent; '
+                        'act("invoice-title",{title:"company"}); '
+                        'const personal=element("[data-invoice-title-personal]").textContent; '
+                        'const company=element("[data-invoice-title-company]").textContent; '
+                        'act("invoice-submit"); const after=boards.find(b=>!b.hidden).getAttribute(); '
+                        'otab("invoiced"); const invoicedList=element("[data-order-list]").innerHTML; '
+                        'console.log(JSON.stringify({completedList,screen,route,personal,company,after,invoicedList}));')
+        self.assertIn('data-action="request-invoice"', result['completedList'])
+        self.assertIn('data-order-id="o-1"', result['completedList'])
+        self.assertEqual(result['screen'], 'invoice-application')
+        self.assertEqual(result['route'], '海智园 1 号线')
+        self.assertEqual(result['personal'], '选择')
+        self.assertEqual(result['company'], '已选择')
+        self.assertEqual(result['after'], 'order-center')
+        self.assertIn('已开票', result['invoicedList'])
+        self.assertIn('data-order-id="o-1"', result['invoicedList'])
 
 
 if __name__ == '__main__':

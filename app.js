@@ -9,7 +9,7 @@
     return {
       order: null, selectedCoupon: null, selectedDate: '2026-09-20', datePickerTarget: null, points: 1280, coupons: { three: 1, five: 1 },
       exchanged: {}, redeemed: false, ticketState: 'static',
-      orderTab: 'pending', refundTarget: null, payingId: null, orderSeq: 4,
+      orderTab: 'pending', refundTarget: null, invoiceTarget: null, invoiceTitle: 'personal', payingId: null, orderSeq: 4,
       orders: [
         { id: 'o-1', route: '海智园 1 号线', from: '软件园', to: '海智园', direction: '地铁到园区', period: '早', time: '08:30', price: 8, status: 'completed', buyTime: '2026-09-20 08:16', payTime: '2026-09-20 08:18', transactionTime: '2026-09-20 08:18', original: 8, discount: 3, paid: 5, operator: '通勤用户', buyer: '李明', phone: '138****8216', project: '海智园通勤项目', coupon: '海智班车立减券（¥3）' },
         { id: 'o-2', route: '海智园 2 号线', from: '海智园', to: '软件园', direction: '园区到地铁', period: '晚', time: '09:10', price: 8, status: 'pending' },
@@ -92,6 +92,19 @@
     state.refundTarget = null;
     return true;
   }
+  function requestInvoice(state, id) {
+    const order = state.orders.find(item => item.id === id && item.status === 'completed');
+    if (!order) return false;
+    state.invoiceTarget = id;
+    return true;
+  }
+  function confirmInvoice(state) {
+    const order = state.orders.find(item => item.id === state.invoiceTarget && item.status === 'completed');
+    if (!order) return false;
+    order.status = 'invoiced';
+    state.invoiceTarget = null;
+    return true;
+  }
   function exportTicketLedger(doc, rows) {
     const headers = ['路线', '班车时间', '方向', '购买时间', '支付时间', '交易时间', '原始金额', '优惠券抵扣金额', '实付金额', '所属项目', '购买人', '手机号', '操作人', '使用的优惠券'];
     const body = rows.map(row => [row.route, row.time, row.direction, row.buyTime, row.payTime, row.transactionTime, '¥' + row.original.toFixed(2), '¥' + row.discount.toFixed(2), '¥' + row.paid.toFixed(2), row.project, row.buyer, row.phone, row.operator, row.coupon]);
@@ -128,7 +141,7 @@
     return true;
   }
   const api = { routes, createState, selectDate, book, chooseCoupon, total, pay, completePayment, cancelPayment, ordersByStatus,
-    ticketLedger, requestRefund, confirmRefund, previewExchange, exchange, redeem };
+    ticketLedger, requestRefund, confirmRefund, requestInvoice, confirmInvoice, previewExchange, exchange, redeem };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (!root.document) return;
   const doc = root.document;
@@ -147,7 +160,7 @@
     if (order.status === 'pending') action = '<button type="button" class="chip amber" data-action="pay-order" data-order-id="' + order.id + '">去支付</button>';
     else if (order.status === 'paying') action = '<button type="button" class="chip" data-action="view-paying-order" data-order-id="' + order.id + '">查看支付详情</button>';
     else if (order.status === 'invoiced') action = '<span class="chip">已开票</span>';
-    else if (order.status === 'completed') action = '<button type="button" class="chip" data-action="refund" data-order-id="' + order.id + '">申请退票</button>';
+    else if (order.status === 'completed') action = '<button type="button" class="chip" data-action="request-invoice" data-order-id="' + order.id + '">发起开票</button><button type="button" class="chip" data-action="refund" data-order-id="' + order.id + '">申请退票</button>';
     else if (order.status === 'refunded') action = '<span class="chip">已退款</span>';
     else if (order.status === 'cancelled') action = '<span class="chip">已取消</span>';
     return '<div class="card order-card" data-order-id="' + order.id + '">' +
@@ -230,6 +243,14 @@
     text('[data-refund-route]', refundOrder ? refundOrder.route : '');
     text('[data-refund-amount]', refundAmount);
     text('[data-refund-paid]', refundAmount);
+    const invoiceOrder = state.orders.find(item => item.id === state.invoiceTarget);
+    const invoiceAmount = invoiceOrder ? '¥' + (invoiceOrder.paid || invoiceOrder.price).toFixed(2) : '¥0.00';
+    text('[data-invoice-route]', invoiceOrder ? invoiceOrder.route : '');
+    text('[data-invoice-paid]', invoiceAmount);
+    text('[data-invoice-amount]', invoiceAmount);
+    ['personal', 'company'].forEach(id => {
+      text('[data-invoice-title-' + id + ']', state.invoiceTitle === id ? '已选择' : '选择');
+    });
     const list = $('[data-order-list]');
     if (list) {
       const items = ordersByStatus(state, state.orderTab);
@@ -272,6 +293,15 @@
     else if (action === 'refund') { if (requestRefund(state, button.dataset.orderId)) show('refund'); }
     else if (action === 'refund-confirm') {
       if (confirmRefund(state)) { show('order-center'); status('退票成功（演示）：订单已转为已退款，刷新页面后恢复。'); }
+    }
+    else if (action === 'request-invoice') {
+      if (requestInvoice(state, button.dataset.orderId)) { state.invoiceTitle = 'personal'; show('invoice-application'); }
+    }
+    else if (action === 'invoice-title') {
+      if (['personal', 'company'].includes(button.dataset.title)) { state.invoiceTitle = button.dataset.title; render(); }
+    }
+    else if (action === 'invoice-submit') {
+      if (confirmInvoice(state)) { show('order-center'); status('开票申请已提交（演示）：订单已转为已开票，刷新页面后恢复。'); }
     }
     else if (action === 'select-coupon') { if (state.order) show('coupon-selection'); }
     else if (action === 'coupon-three' || action === 'coupon-five' || action === 'coupon-none') {
