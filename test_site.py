@@ -7,9 +7,9 @@ import unittest
 ROOT = pathlib.Path(__file__).parent
 
 MOBILE_SCREENS = ['route-query', 'order-confirmation', 'payment-success', 'purchase-success',
-                  'order-center', 'coupon-selection', 'coupon-center', 'exchange-confirmation',
-                  'my-coupons', 'boarding-ticket', 'refund']
-DESKTOP_SCREENS = ['coupon-management', 'merchant-verification']
+                  'paying-order-detail', 'order-center', 'coupon-selection', 'coupon-center',
+                  'exchange-confirmation', 'my-coupons', 'boarding-ticket', 'refund', 'date-picker']
+DESKTOP_SCREENS = ['coupon-list', 'coupon-create', 'ticket-ledger']
 
 
 class Markup(html.parser.HTMLParser):
@@ -68,6 +68,39 @@ def run_model(script):
 
 
 class Pages(unittest.TestCase):
+    def test_mobile_date_picker_and_payment_detail_markup(self):
+        page = (ROOT / 'mobile.html').read_text(encoding='utf-8')
+        route = board(page, 'data-screen="route-query"')
+        self.assertNotIn('上车站点', route)
+        self.assertNotIn('下车站点', route)
+        self.assertIn('data-action="open-date-picker"', route)
+        self.assertNotIn('约 35 分钟', route)
+        picker = board(page, 'data-screen="date-picker"')
+        self.assertIn('data-action="select-date"', picker)
+        detail = board(page, 'data-screen="paying-order-detail"')
+        self.assertIn('data-action="cancel-payment"', detail)
+
+    def test_desktop_has_coupon_list_create_and_ticket_ledger_pages(self):
+        doc = markup('desktop.html')
+        screens = [a['data-desktop-screen'] for tag, a in doc.attrs
+                   if tag == 'article' and 'data-desktop-screen' in a]
+        self.assertEqual(screens, ['coupon-list', 'coupon-create', 'ticket-ledger'])
+        page = (ROOT / 'desktop.html').read_text(encoding='utf-8')
+        listing = board(page, 'data-desktop-screen="coupon-list"')
+        self.assertIn('aria-label="搜索优惠券"', listing)
+        self.assertIn('data-action="view-coupons"', listing)
+        self.assertIn('data-nav="coupon-create"', listing)
+        self.assertIn('data-action="export-excel"', listing)
+        create = board(page, 'data-desktop-screen="coupon-create"')
+        create_doc = Markup()
+        create_doc.feed(create)
+        self.assertEqual(sum(a.get('data-action') == 'draft' for tag, a in create_doc.attrs), 1)
+        self.assertEqual(sum(a.get('data-action') == 'publish' for tag, a in create_doc.attrs), 1)
+        ledger = board(page, 'data-desktop-screen="ticket-ledger"')
+        self.assertNotIn('确认核销优惠券', ledger)
+        self.assertNotIn('券码查询或扫码结果', ledger)
+        self.assertIn('data-ticket-ledger', ledger)
+
     def test_index_has_two_relative_entries_and_no_legacy_content(self):
         page = (ROOT / 'index.html').read_text(encoding='utf-8')
         links = [a.get('href') for tag, a in markup('index.html').attrs if tag == 'a']
@@ -101,14 +134,14 @@ class Pages(unittest.TestCase):
         self.assertIn('data-nav="boarding-ticket"', purchase)
         self.assertIn('data-nav="order-center"', purchase)
 
-    def test_order_center_has_four_status_tabs_and_refund_page_rule(self):
+    def test_order_center_has_five_status_tabs_and_refund_page_rule(self):
         page = (ROOT / 'mobile.html').read_text(encoding='utf-8')
         center = board(page, 'data-screen="order-center"')
         doc = Markup()
         doc.feed(center)
         tabs = [a.get('data-order-tab') for tag, a in doc.attrs if tag == 'button' and 'data-order-tab' in a]
-        self.assertEqual(tabs, ['pending', 'paying', 'completed', 'invoiced'])
-        for label in ('待支付', '支付中', '已完成', '已开票'):
+        self.assertEqual(tabs, ['pending', 'paying', 'completed', 'cancelled', 'invoiced'])
+        for label in ('待支付', '支付中', '已完成', '已取消', '已开票'):
             self.assertIn(label, center)
         self.assertIn('data-order-list', center)
         refund = board(page, 'data-screen="refund"')
@@ -122,8 +155,7 @@ class Pages(unittest.TestCase):
         self.assertEqual(screens, DESKTOP_SCREENS)
         page = (ROOT / 'desktop.html').read_text(encoding='utf-8')
         self.assertNotIn('screen-nav', page)
-        self.assertNotIn('shuttle-rules', page)
-        self.assertIn('发车前 30 分钟', page)
+        self.assertNotIn('发车前 30 分钟', page)
         css = (ROOT / 'styles.css').read_text(encoding='utf-8')
         self.assertIn('1920px', css)
         self.assertIn('1080px', css)
@@ -147,16 +179,16 @@ class Pages(unittest.TestCase):
 
     def test_merchant_ticket_table_has_current_park_purchase_details(self):
         page = (ROOT / 'desktop.html').read_text(encoding='utf-8')
-        merchant = board(page, 'data-desktop-screen="merchant-verification"')
+        merchant = board(page, 'data-desktop-screen="ticket-ledger"')
         for column in ('班车时间', '所属项目', '购买人', '手机号', '交易时间'):
             self.assertIn(column, merchant)
 
     def test_coupon_management_has_add_view_and_full_coupon_fields(self):
         page = (ROOT / 'desktop.html').read_text(encoding='utf-8')
-        management = board(page, 'data-desktop-screen="coupon-management"')
-        for label in ('新增优惠券', '查看优惠券', '归属项目', '归属商家', '优惠券图片',
-                      '直减', '折扣', '优惠券详情', '优惠券状态'):
-            self.assertIn(label, management)
+        management = board(page, 'data-desktop-screen="coupon-create"')
+        self.assertIn('优惠券名称', management)
+        self.assertIn('优惠券详情', management)
+        self.assertIn('查看 / 编辑', (ROOT / 'desktop.html').read_text(encoding='utf-8'))
         inputs = [a.get('aria-label') for tag, a in markup('desktop.html').attrs if tag == 'input']
         for label in ('归属项目', '归属商家', '优惠券图片', '折扣值', '优惠券状态'):
             self.assertIn(label, inputs)
@@ -179,16 +211,12 @@ class Pages(unittest.TestCase):
 
     def test_merchant_board_has_badge_remaining_and_ledger(self):
         page = (ROOT / 'desktop.html').read_text(encoding='utf-8')
-        merchant = board(page, 'data-desktop-screen="merchant-verification"')
-        self.assertIn('data-redeem-badge', merchant)
-        self.assertIn('data-redeem-remaining', merchant)
-        self.assertIn('data-ledger', merchant)
-        for column in ('券码', '核销时间', '操作人'):
-            self.assertIn(column, merchant)
+        merchant = board(page, 'data-desktop-screen="ticket-ledger"')
+        self.assertIn('data-ticket-ledger', merchant)
 
     def test_merchant_board_shows_ticket_ledger_with_excel_export(self):
         page = (ROOT / 'desktop.html').read_text(encoding='utf-8')
-        merchant = board(page, 'data-desktop-screen="merchant-verification"')
+        merchant = board(page, 'data-desktop-screen="ticket-ledger"')
         self.assertIn('data-ticket-ledger', merchant)
         for column in ('路线', '购买时间', '支付时间', '原始金额', '优惠券抵扣金额',
                        '实付金额', '操作人', '使用的优惠券'):
@@ -225,6 +253,22 @@ class Pages(unittest.TestCase):
 
 
 class Business(unittest.TestCase):
+    def test_date_selection_is_used_when_booking(self):
+        result = run_model(
+            "const s=Demo.createState(); Demo.selectDate(s,'2026-09-23'); "
+            "Demo.book(s,'route-1'); console.log(JSON.stringify({date:s.selectedDate, travelDate:s.order.travelDate}));"
+        )
+        self.assertEqual(result, {'date': '2026-09-23', 'travelDate': '2026-09-23'})
+
+    def test_paying_order_can_be_cancelled_and_cannot_complete(self):
+        result = run_model(
+            "const s=Demo.createState(); Demo.book(s,'route-1'); Demo.pay(s); const id=s.payingId; "
+            "const cancelled=Demo.cancelPayment(s,id); "
+            "const completed=Demo.completePayment(s); "
+            "console.log(JSON.stringify({cancelled,completed,status:s.orders.find(o=>o.id===id).status,payingId:s.payingId}));"
+        )
+        self.assertEqual(result, {'cancelled': True, 'completed': False, 'status': 'cancelled', 'payingId': None})
+
     def test_no_coupon_selection_or_payment_before_booking(self):
         result = run_model('const s = Demo.createState(); '
                            'const choose = Demo.chooseCoupon(s,"three"); '
@@ -276,24 +320,15 @@ class Business(unittest.TestCase):
         self.assertEqual(result['three']['before'], 880)
         self.assertEqual(result['three']['after'], 640)
 
-    def test_redemption_render_changes_badge_quantity_and_button_once(self):
-        result = run_ui('act("redeem"); const first = {badge:element("[data-redeem-badge]").textContent, '
-                        'remaining:element("[data-redeem-remaining]").textContent, '
-                        'disabled:element(\'[data-action="redeem"]\').disabled}; '
-                        'act("redeem"); console.log(JSON.stringify({first, remaining:element("[data-redeem-remaining]").textContent}));', desktop=True)
-        self.assertEqual(result['first'], {'badge': '已核销', 'remaining': '372 张', 'disabled': True})
-        self.assertEqual(result['remaining'], '372 张')
-
-    def test_redeem_appends_ledger_row_once(self):
-        result = run_ui('const before = element("[data-ledger]").innerHTML; '
-                        'act("redeem"); act("redeem"); '
-                        'const after = element("[data-ledger]").innerHTML; '
-                        'console.log(JSON.stringify({beforeHasNew: before.includes("CPN 826 193"), '
-                        'afterHasNew: after.includes("CPN 826 193"), '
-                        'rows: (after.match(/<tr>/g) || []).length}));', desktop=True)
-        self.assertFalse(result['beforeHasNew'])
-        self.assertTrue(result['afterHasNew'])
-        self.assertEqual(result['rows'], 3)
+    def test_desktop_ui_has_no_redeem_runtime_dependencies(self):
+        app = (ROOT / 'app.js').read_text(encoding='utf-8')
+        self.assertNotIn('ledgerSeed', app)
+        self.assertNotIn('ledgerNew', app)
+        self.assertNotIn('data-action="redeem"', app)
+        self.assertNotIn('data-ledger', app)
+        self.assertNotIn('data-redeem-state', app)
+        self.assertNotIn('data-redeem-badge', app)
+        self.assertNotIn("action === 'redeem'", app)
 
     def test_exchange_confirmation_only_consumes_selected_id_once(self):
         result = run_ui('act("exchange-preview",{exchangeId:"five"}); '

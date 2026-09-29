@@ -7,7 +7,7 @@
   };
   function createState() {
     return {
-      order: null, selectedCoupon: null, points: 1280, coupons: { three: 1, five: 1 },
+      order: null, selectedCoupon: null, selectedDate: '2026-09-20', datePickerTarget: null, points: 1280, coupons: { three: 1, five: 1 },
       exchanged: {}, redeemed: false, ticketState: 'static',
       orderTab: 'pending', refundTarget: null, payingId: null, orderSeq: 4,
       orders: [
@@ -18,9 +18,15 @@
       ]
     };
   }
+  function selectDate(state, date) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+    state.selectedDate = date;
+    state.datePickerTarget = null;
+    return true;
+  }
   function book(state, id) {
     if (!routes[id]) return false;
-    state.order = { ...routes[id] };
+    state.order = { ...routes[id], travelDate: state.selectedDate };
     state.selectedCoupon = state.coupons.three > 0 ? 'three' : null;
     return true;
   }
@@ -56,9 +62,16 @@
     state.payingId = null;
     return true;
   }
+  function cancelPayment(state, id) {
+    const order = state.orders.find(item => item.id === id && item.status === 'paying');
+    if (!order) return false;
+    order.status = 'cancelled';
+    if (state.payingId === id) state.payingId = null;
+    return true;
+  }
   function ordersByStatus(state, status) { return state.orders.filter(order => order.status === status); }
   function ticketLedger(state) {
-    return state.orders.filter(order => !['pending', 'paying', 'refunded'].includes(order.status) && order.buyTime).map(order => ({
+    return state.orders.filter(order => !['pending', 'paying', 'cancelled', 'refunded'].includes(order.status) && order.buyTime).map(order => ({
       route: order.route, time: order.time, period: order.period, direction: order.direction,
       buyTime: order.buyTime, payTime: order.payTime, transactionTime: order.transactionTime,
       original: order.original, discount: order.discount, paid: order.paid,
@@ -114,7 +127,7 @@
     state.redeemed = true;
     return true;
   }
-  const api = { routes, createState, book, chooseCoupon, total, pay, completePayment, ordersByStatus,
+  const api = { routes, createState, selectDate, book, chooseCoupon, total, pay, completePayment, cancelPayment, ordersByStatus,
     ticketLedger, requestRefund, confirmRefund, previewExchange, exchange, redeem };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (!root.document) return;
@@ -128,20 +141,18 @@
   const $ = (query, base = doc) => base.querySelector(query);
   function text(query, value, base = doc) { const element = $(query, base); if (element) element.textContent = String(value); }
   function status(message) { const area = $('#demo-status'); if (area) { area.textContent = message; area.hidden = false; } }
-  const ledgerSeed = '<tr><td>CPN 511 002</td><td>09-26 18:42</td><td>海智班车</td></tr>' +
-    '<tr><td>CPN 511 018</td><td>09-27 08:05</td><td>海智班车</td></tr>';
-  const ledgerNew = '<tr><td>CPN 826 193</td><td>09-27 08:24</td><td>海智班车</td></tr>';
   function orderCard(order) {
     const meta = order.from && order.to ? order.from + ' → ' + order.to + ' · ' + order.time : order.time;
     let action = '';
     if (order.status === 'pending') action = '<button type="button" class="chip amber" data-action="pay-order" data-order-id="' + order.id + '">去支付</button>';
-    else if (order.status === 'paying') action = '<span class="chip">支付中</span>';
+    else if (order.status === 'paying') action = '<button type="button" class="chip" data-action="view-paying-order" data-order-id="' + order.id + '">查看支付详情</button>';
     else if (order.status === 'invoiced') action = '<span class="chip">已开票</span>';
     else if (order.status === 'completed') action = '<button type="button" class="chip" data-action="refund" data-order-id="' + order.id + '">申请退票</button>';
     else if (order.status === 'refunded') action = '<span class="chip">已退款</span>';
+    else if (order.status === 'cancelled') action = '<span class="chip">已取消</span>';
     return '<div class="card order-card" data-order-id="' + order.id + '">' +
       '<div class="row"><div><b>' + order.route + '</b><div class="muted">' + meta + '</div></div>' + action + '</div>' +
-      '<div class="row"><span class="muted">09 月 20 日 · ¥' + (order.paid || order.price).toFixed(2) + '</span>' +
+      '<div class="row"><span class="muted">' + (order.travelDate || '2026-09-20').slice(5).replace('-', ' 月 ') + ' 日 · ¥' + (order.paid || order.price).toFixed(2) + '</span>' +
       '<span class="muted">订单号 ' + order.id.toUpperCase() + '</span></div></div>';
   }
   function show(name) {
@@ -154,16 +165,9 @@
   }
   function render() {
     if (!mobile) {
-      text('[data-redeem-state]', state.redeemed ? '优惠券已核销，不能重复核销' : '优惠券有效，可由当前商家核销');
-      text('[data-redeem-badge]', state.redeemed ? '已核销' : '待核销');
-      text('[data-redeem-remaining]', (state.redeemed ? 372 : 373) + ' 张');
-      const redeemButton = $('[data-action="redeem"]');
-      if (redeemButton) redeemButton.disabled = state.redeemed;
-      const ledger = $('[data-ledger]');
-      if (ledger) ledger.innerHTML = state.redeemed ? ledgerSeed + ledgerNew : ledgerSeed;
       const rows = ticketLedger(state);
       const ticketLedgerBody = $('[data-ticket-ledger]');
-      if (ticketLedgerBody) ticketLedgerBody.innerHTML = rows.map(row => '<tr><td>' + row.route + '</td><td>' + row.buyTime + '</td><td>' + row.payTime + '</td><td>¥' + row.original.toFixed(2) + '</td><td>¥' + row.discount.toFixed(2) + '</td><td>¥' + row.paid.toFixed(2) + '</td><td>' + row.operator + '</td><td>' + row.coupon + '</td></tr>').join('');
+      if (ticketLedgerBody) ticketLedgerBody.innerHTML = rows.map(row => '<tr><td>' + row.route + '</td><td>' + row.time + '</td><td>' + row.direction + '</td><td>' + row.buyTime + '</td><td>' + row.payTime + '</td><td>' + row.transactionTime + '</td><td>¥' + row.original.toFixed(2) + '</td><td>¥' + row.discount.toFixed(2) + '</td><td>¥' + row.paid.toFixed(2) + '</td><td>' + row.project + '</td><td>' + row.buyer + '</td><td>' + row.phone + '</td><td>' + row.operator + '</td><td>' + row.coupon + '</td></tr>').join('');
       const ticketLedgerExport = $('[data-ticket-ledger-export]');
       if (ticketLedgerExport) ticketLedgerExport.textContent = JSON.stringify(rows);
       return;
@@ -187,6 +191,16 @@
     text('[data-order-route]', order.route);
     text('[data-order-stops]', order.from + ' → ' + order.to);
     text('[data-order-time]', order.time);
+    function formatDate(date) {
+      const parts = date.split('-');
+      return parts[1] + ' 月 ' + parts[2] + ' 日';
+    }
+    text('[data-selected-date]', formatDate(state.selectedDate));
+    text('[data-order-date]', formatDate(order.travelDate || state.selectedDate));
+    text('[data-order-date-label]', formatDate(order.travelDate || state.selectedDate));
+    doc.querySelectorAll('[data-date]').forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.date === state.selectedDate));
+    });
     text('[data-order-price]', '¥' + order.price.toFixed(2));
     text('[data-order-subtotal]', '¥' + order.price.toFixed(2));
     text('[data-order-discount]', '-¥' + (state.selectedCoupon === 'three' ? 3 : state.selectedCoupon === 'five' ? 5 : 0).toFixed(2));
@@ -195,6 +209,12 @@
     text('[data-pay-label]', '模拟支付 · ¥' + total({ ...state, order }).toFixed(2));
     const payingOrder = state.orders.find(item => item.id === state.payingId);
     text('[data-pay-amount]', '¥' + (payingOrder ? payingOrder.paid : total({ ...state, order })).toFixed(2));
+    text('[data-paying-route]', payingOrder ? payingOrder.route : '');
+    text('[data-paying-date]', payingOrder ? formatDate(payingOrder.travelDate || state.selectedDate) : '');
+    text('[data-paying-time]', payingOrder ? payingOrder.time : '');
+    text('[data-paying-order-id]', payingOrder ? payingOrder.id.toUpperCase() : '');
+    text('[data-paying-amount]', payingOrder ? '¥' + (payingOrder.paid || payingOrder.price).toFixed(2) : '¥0.00');
+    text('[data-paying-status]', payingOrder ? '支付中' : '');
     text('[data-points]', state.points.toLocaleString('zh-CN'));
     text('[data-coupon-three-count]', state.coupons.three);
     text('[data-coupon-five-count]', state.coupons.five);
@@ -220,16 +240,26 @@
     doc.querySelectorAll('[data-order-tab]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.orderTab === state.orderTab)));
   }
   doc.addEventListener('click', event => {
-    const button = event.target.closest('button[data-nav], button[data-action], button[data-ticket-tab], button[data-order-tab]');
+    const button = event.target.closest('button[data-nav], button[data-action], button[data-ticket-tab], button[data-order-tab], button[data-date]');
     if (!button || button.disabled) return;
     if (button.dataset.nav) { show(button.dataset.nav); return; }
+    if (button.dataset.date) { if (selectDate(state, button.dataset.date)) show('route-query'); return; }
     if (button.dataset.ticketTab) { state.ticketState = button.dataset.ticketTab; render(); return; }
     if (button.dataset.orderTab) { state.orderTab = button.dataset.orderTab; render(); return; }
     const action = button.dataset.action;
-    if (action === 'book') { if (book(state, button.dataset.route)) show('order-confirmation'); }
+    if (action === 'open-date-picker') { state.datePickerTarget = state.selectedDate; show('date-picker'); }
+    else if (action === 'select-date') { if (selectDate(state, button.dataset.date)) show('route-query'); }
+    else if (action === 'book') { if (book(state, button.dataset.route)) show('order-confirmation'); }
     else if (action === 'pay') { if (pay(state)) show('payment-success'); }
     else if (action === 'payment-done') {
       if (completePayment(state)) { show('purchase-success'); status('模拟支付确认完成：订单已转为已完成（演示）。'); }
+    }
+    else if (action === 'view-paying-order') {
+      const target = state.orders.find(item => item.id === button.dataset.orderId && item.status === 'paying');
+      if (target) { state.payingId = target.id; show('paying-order-detail'); }
+    }
+    else if (action === 'cancel-payment') {
+      if (cancelPayment(state, state.payingId)) { state.orderTab = 'cancelled'; show('order-center'); status('支付已取消（演示）。'); }
     }
     else if (action === 'pay-order') {
       const target = state.orders.find(item => item.id === button.dataset.orderId && item.status === 'pending');
@@ -262,10 +292,6 @@
       status('已加载当前园区优惠券（演示数据）；未连接真实后台。');
     } else if (action === 'add-coupon') {
       status('已打开新增优惠券表单（演示）；填写后点击确认发布即可模拟提交。');
-    } else if (action === 'redeem') {
-      const ok = redeem(state, 'haizhi');
-      render();
-      status(ok ? '优惠券模拟核销成功，已写入核销台账；乘车票状态不受影响。' : '此优惠券已核销，不可重复操作。');
     } else if (action === 'export-excel') {
       status(exportTicketLedger(doc, ticketLedger(state)) ? '车票台账已导出（演示 Excel 文件）。' : '当前环境不支持导出。');
     }
