@@ -9,7 +9,7 @@ ROOT = pathlib.Path(__file__).parent
 MOBILE_SCREENS = ['route-query', 'order-confirmation', 'payment-success', 'purchase-success',
                   'paying-order-detail', 'order-center', 'coupon-selection', 'coupon-center',
                   'exchange-confirmation', 'my-coupons', 'boarding-ticket', 'refund',
-                  'invoice-application', 'date-picker']
+                  'invoice-application', 'date-picker', 'park-services', 'contact']
 DESKTOP_SCREENS = ['coupon-list', 'coupon-create', 'ticket-ledger']
 
 
@@ -500,14 +500,16 @@ class Business(unittest.TestCase):
         self.assertEqual(first['original'] - first['discount'], first['paid'])
         self.assertTrue(all(row['buyTime'] and row['payTime'] for row in rows))
 
-    def test_ticket_ledger_excludes_refunded_and_unpaid_orders(self):
+    def test_ticket_ledger_marks_refunded_and_excludes_unpaid_orders(self):
         result = run_model('const s=Demo.createState(); '
                            'const before=Demo.ticketLedger(s); '
                            'Demo.requestRefund(s,"o-1"); Demo.confirmRefund(s); '
                            'const after=Demo.ticketLedger(s); '
-                           'console.log(JSON.stringify({before:before.map(o=>o.route),after:after.map(o=>o.route)}));')
+                           'console.log(JSON.stringify({before:before.map(o=>o.route),'
+                           'after:after.map(o=>o.route),statuses:after.map(o=>o.status)}));')
         self.assertEqual(result['before'], ['海智园 1 号线', '海智园 2 号线'])
-        self.assertEqual(result['after'], ['海智园 2 号线'])
+        self.assertEqual(result['after'], ['海智园 1 号线', '海智园 2 号线'])
+        self.assertEqual(result['statuses'], ['已退款', '已完成'])
 
     def test_ticket_ledger_exposes_purchase_identity_and_transaction_time(self):
         result = run_model('const row=Demo.ticketLedger(Demo.createState())[0]; '
@@ -578,6 +580,98 @@ class Business(unittest.TestCase):
         self.assertEqual(result['after'], 'order-center')
         self.assertIn('已开票', result['invoicedList'])
         self.assertIn('data-order-id="o-1"', result['invoicedList'])
+
+    def test_mobile_tab_bar_lists_park_services_first(self):
+        page = (ROOT / 'mobile.html').read_text(encoding='utf-8')
+        bar = board(page, 'class="ios-tab-bar"')
+        self.assertLess(bar.index('data-nav="park-services"'), bar.index('data-nav="order-center"'))
+        self.assertLess(bar.index('data-nav="order-center"'), bar.index('data-nav="my-coupons"'))
+        self.assertIn('class="on"', bar)
+
+    def test_park_services_hub_lists_four_entries(self):
+        page = (ROOT / 'mobile.html').read_text(encoding='utf-8')
+        hub = board(page, 'data-screen="park-services"')
+        self.assertIn('线路列表', hub)
+        self.assertIn('data-nav="route-query"', hub)
+        self.assertIn('我要开票', hub)
+        self.assertIn('data-action="invoice-entry"', hub)
+        self.assertIn('我的订单', hub)
+        self.assertIn('data-action="orders-entry"', hub)
+        self.assertIn('联系我们', hub)
+        self.assertIn('data-nav="contact"', hub)
+        self.assertNotIn('data-action="book"', hub)
+        self.assertNotIn('data-ticket-state', hub)
+
+    def test_invoice_entry_opens_order_center_on_completed_tab(self):
+        result = run_ui('act("invoice-entry"); '
+                        'const screen=boards.find(b=>!b.hidden).getAttribute(); '
+                        'console.log(JSON.stringify({screen}));')
+        self.assertEqual(result['screen'], 'order-center')
+        page = (ROOT / 'mobile.html').read_text(encoding='utf-8')
+        self.assertIn('data-action="invoice-entry"', board(page, 'data-screen="park-services"'))
+
+    def test_orders_entry_opens_order_center(self):
+        result = run_ui('act("orders-entry"); '
+                        'const screen=boards.find(b=>!b.hidden).getAttribute(); '
+                        'console.log(JSON.stringify({screen}));')
+        self.assertEqual(result['screen'], 'order-center')
+
+    def test_contact_screen_exists_with_contact_content(self):
+        page = (ROOT / 'mobile.html').read_text(encoding='utf-8')
+        contact = board(page, 'data-screen="contact"')
+        self.assertIn('联系我们', contact)
+        self.assertIn('data-nav="park-services"', contact)
+
+    def test_coupon_list_has_name_and_time_filters(self):
+        page = (ROOT / 'desktop.html').read_text(encoding='utf-8')
+        listing = board(page, 'data-desktop-screen="coupon-list"')
+        self.assertIn('aria-label="搜索优惠券"', listing)
+        self.assertIn('data-action="filter-coupons"', listing)
+        self.assertIn('aria-label="发放时间"', listing)
+
+    def test_coupon_filter_applies_name_and_time(self):
+        result = run_ui('act("filter-coupons", {couponName:"海智", couponTime:"2026-09"}); '
+                        'const rows=element("[data-coupon-filter-result]").innerHTML; '
+                        'console.log(JSON.stringify({rows}));', desktop=True)
+        self.assertIn('海智班车立减券', result['rows'])
+        result = run_ui('act("filter-coupons", {couponName:"通勤", couponTime:"2026-09"}); '
+                        'const rows=element("[data-coupon-filter-result]").innerHTML; '
+                        'console.log(JSON.stringify({rows}));', desktop=True)
+        self.assertEqual(result['rows'].strip(), '')
+
+    def test_ticket_ledger_has_status_and_time_filters(self):
+        page = (ROOT / 'desktop.html').read_text(encoding='utf-8')
+        ledger = board(page, 'data-desktop-screen="ticket-ledger"')
+        self.assertIn('aria-label="车票状态"', ledger)
+        self.assertIn('aria-label="购票时间"', ledger)
+        self.assertIn('data-action="filter-ledger"', ledger)
+        self.assertIn('已完成', ledger)
+        self.assertIn('已退款', ledger)
+
+    def test_ledger_filter_returns_completed_and_refunded_rows(self):
+        result = run_model('const s=Demo.createState(); '
+                           'const completed=Demo.ticketLedger(s,{status:"completed"}); '
+                           'Demo.requestRefund(s,"o-1"); Demo.confirmRefund(s); '
+                           'const refunded=Demo.ticketLedger(s,{status:"refunded"}); '
+                           'const untouched=Demo.ticketLedger(s); '
+                           'console.log(JSON.stringify({completed:completed.map(o=>o.id), '
+                           'refunded:refunded.map(o=>o.id), refundedRow:refunded[0], '
+                           'untouched:untouched.map(o=>o.route)}));')
+        self.assertEqual(result['completed'], ['o-1'])
+        self.assertEqual(result['refunded'], ['o-1'])
+        self.assertEqual(result['untouched'], ['海智园 1 号线', '海智园 2 号线'])
+        self.assertIn('buyer', result['refundedRow'])
+
+    def test_ledger_ui_filter_shows_refunded_row(self):
+        result = run_ui('act("filter-ledger", {ledgerStatus:"completed", ledgerTime:""}); '
+                        'const completed=element("[data-ticket-ledger]").innerHTML; '
+                        'act("filter-ledger", {ledgerStatus:"refunded", ledgerTime:""}); '
+                        'const refunded=element("[data-ticket-ledger]").innerHTML; '
+                        'console.log(JSON.stringify({completed, refunded}));', desktop=True)
+        self.assertIn('已完成', result['completed'])
+        self.assertIn('李明', result['completed'])
+        self.assertIn('海智园 1 号线', result['completed'])
+        self.assertEqual(result['refunded'].strip(), '')
 
 
 if __name__ == '__main__':

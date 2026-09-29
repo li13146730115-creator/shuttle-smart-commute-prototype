@@ -70,14 +70,21 @@
     return true;
   }
   function ordersByStatus(state, status) { return state.orders.filter(order => order.status === status); }
-  function ticketLedger(state) {
-    return state.orders.filter(order => !['pending', 'paying', 'cancelled', 'refunded'].includes(order.status) && order.buyTime).map(order => ({
-      route: order.route, time: order.time, period: order.period, direction: order.direction,
-      buyTime: order.buyTime, payTime: order.payTime, transactionTime: order.transactionTime,
-      original: order.original, discount: order.discount, paid: order.paid,
-      project: order.project, buyer: order.buyer, phone: order.phone,
-      operator: order.operator, coupon: order.coupon
-    }));
+  function ticketLedger(state, filters = {}) {
+    const statusLabels = { completed: '已完成', refunded: '已退款', invoiced: '已完成' };
+    return state.orders
+      .filter(order => order.buyTime && statusLabels[order.status])
+      .filter(order => !filters.status || order.status === filters.status)
+      .filter(order => !filters.time || order.buyTime.startsWith(filters.time))
+      .map(order => ({
+        id: order.id,
+        status: statusLabels[order.status],
+        route: order.route, time: order.time, period: order.period, direction: order.direction,
+        buyTime: order.buyTime, payTime: order.payTime, transactionTime: order.transactionTime,
+        original: order.original, discount: order.discount, paid: order.paid,
+        project: order.project, buyer: order.buyer, phone: order.phone,
+        operator: order.operator, coupon: order.coupon
+      }));
   }
   function requestRefund(state, id) {
     const order = state.orders.find(item => item.id === id && item.status === 'completed');
@@ -106,8 +113,7 @@
     return true;
   }
   function exportTicketLedger(doc, rows) {
-    const headers = ['路线', '班车时间', '方向', '购买时间', '支付时间', '交易时间', '原始金额', '优惠券抵扣金额', '实付金额', '所属项目', '购买人', '手机号', '操作人', '使用的优惠券'];
-    const body = rows.map(row => [row.route, row.time, row.direction, row.buyTime, row.payTime, row.transactionTime, '¥' + row.original.toFixed(2), '¥' + row.discount.toFixed(2), '¥' + row.paid.toFixed(2), row.project, row.buyer, row.phone, row.operator, row.coupon]);
+    const headers = ['路线', '班车时间', '方向', '购买时间', '支付时间', '交易时间', '原始金额', '优惠券抵扣金额', '实付金额', '所属项目', '购买人', '手机号', '操作人', '使用的优惠券'];    const body = rows.map(row => [row.route, row.time, row.direction, row.buyTime, row.payTime, row.transactionTime, '¥' + row.original.toFixed(2), '¥' + row.discount.toFixed(2), '¥' + row.paid.toFixed(2), row.project, row.buyer, row.phone, row.operator, row.coupon]);
     const table = '<table><thead><tr>' + headers.map(value => '<th>' + value + '</th>').join('') + '</tr></thead><tbody>' + body.map(row => '<tr>' + row.map(value => '<td>' + value + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
     const anchor = doc.createElement && doc.createElement('a');
     if (!anchor) return false;
@@ -178,11 +184,21 @@
   }
   function render() {
     if (!mobile) {
-      const rows = ticketLedger(state);
+      const rows = ticketLedger(state, state.ledgerFilters || {});
       const ticketLedgerBody = $('[data-ticket-ledger]');
-      if (ticketLedgerBody) ticketLedgerBody.innerHTML = rows.map(row => '<tr><td>' + row.route + '</td><td>' + row.time + '</td><td>' + row.direction + '</td><td>' + row.buyTime + '</td><td>' + row.payTime + '</td><td>' + row.transactionTime + '</td><td>¥' + row.original.toFixed(2) + '</td><td>¥' + row.discount.toFixed(2) + '</td><td>¥' + row.paid.toFixed(2) + '</td><td>' + row.project + '</td><td>' + row.buyer + '</td><td>' + row.phone + '</td><td>' + row.operator + '</td><td>' + row.coupon + '</td></tr>').join('');
+      if (ticketLedgerBody) ticketLedgerBody.innerHTML = rows.map(row => '<tr><td>' + row.route + '</td><td>' + row.time + '</td><td>' + row.direction + '</td><td>' + row.buyTime + '</td><td>' + row.payTime + '</td><td>' + row.transactionTime + '</td><td>¥' + row.original.toFixed(2) + '</td><td>¥' + row.discount.toFixed(2) + '</td><td>¥' + row.paid.toFixed(2) + '</td><td>' + row.project + '</td><td>' + row.buyer + '</td><td>' + row.phone + '</td><td>' + row.operator + '</td><td>' + row.coupon + '</td><td>' + row.status + '</td></tr>').join('');
       const ticketLedgerExport = $('[data-ticket-ledger-export]');
       if (ticketLedgerExport) ticketLedgerExport.textContent = JSON.stringify(rows);
+      const couponCatalog = [
+        { name: '海智班车立减券', type: '直减 ¥3', project: '海智园通勤项目', grantTime: '2026-09-20 10:00', status: '启用' },
+        { name: '通勤满减券', type: '满 ¥10 减 ¥5', project: '海智园通勤项目', grantTime: '2026-10-01 09:00', status: '启用' }
+      ];
+      const couponFilters = state.couponFilters || { name: '', time: '' };
+      const couponHits = couponCatalog
+        .filter(item => !couponFilters.name || item.name.includes(couponFilters.name))
+        .filter(item => !couponFilters.time || item.grantTime.startsWith(couponFilters.time));
+      const couponResult = $('[data-coupon-filter-result]');
+      if (couponResult) couponResult.innerHTML = couponHits.map(item => '<div class="card"><div class="row"><div><b>' + item.name + '</b><div class="muted">' + item.type + ' · ' + item.project + ' · 发放 ' + item.grantTime + '</div></div><span class="chip green">' + item.status + '</span></div></div>').join('');
       return;
     }
     const order = state.order || routes['route-1'];
@@ -324,6 +340,23 @@
       status('已加载当前园区优惠券（演示数据）；未连接真实后台。');
     } else if (action === 'add-coupon') {
       status('已打开新增优惠券表单（演示）；填写后点击确认发布即可模拟提交。');
+    } else if (action === 'invoice-entry') {
+      state.orderTab = 'completed';
+      show('order-center');
+    } else if (action === 'orders-entry') {
+      show('order-center');
+    } else if (action === 'filter-coupons') {
+      state.couponFilters = {
+        name: button.dataset.couponName || (($('[aria-label="搜索优惠券"]') || {}).value || ''),
+        time: button.dataset.couponTime || (($('[aria-label="发放时间"]') || {}).value || '')
+      };
+      render();
+    } else if (action === 'filter-ledger') {
+      state.ledgerFilters = {
+        status: button.dataset.ledgerStatus || (($('[aria-label="车票状态"]') || {}).value || ''),
+        time: button.dataset.ledgerTime || (($('[aria-label="购票时间"]') || {}).value || '')
+      };
+      render();
     } else if (action === 'export-excel') {
       status(exportTicketLedger(doc, ticketLedger(state)) ? '车票台账已导出（演示 Excel 文件）。' : '当前环境不支持导出。');
     }
