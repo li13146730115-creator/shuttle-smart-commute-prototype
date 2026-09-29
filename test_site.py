@@ -326,6 +326,18 @@ class Redesign(unittest.TestCase):
         for token in ('.form-label{', '.create-section{', '.create-footer{', '.upload-box{', '.section-eyebrow{'):
             self.assertIn(token, css)
 
+    def test_coupon_create_has_validity_period_config(self):
+        page = (ROOT / 'desktop.html').read_text(encoding='utf-8')
+        create = board(page, 'data-desktop-screen="coupon-create"')
+        self.assertIn('*有效期', create)
+        self.assertIn('固定日期范围', create)
+        self.assertIn('领取后生效天数', create)
+        self.assertIn('生效日期', create)
+        self.assertIn('失效日期', create)
+        self.assertIn('aria-label="生效日期"', create)
+        self.assertIn('aria-label="失效日期"', create)
+        self.assertIn('aria-label="生效天数"', create)
+
 
 class Business(unittest.TestCase):
     def test_date_selection_is_used_when_booking(self):
