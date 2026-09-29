@@ -252,6 +252,56 @@ class Pages(unittest.TestCase):
         self.assertEqual(len([1 for tag, a in mobile.attrs if 'data-ticket-state' in a]), 3)
 
 
+class Redesign(unittest.TestCase):
+    def test_route_cards_highlight_time_window_like_12306(self):
+        page = (ROOT / 'mobile.html').read_text(encoding='utf-8')
+        route = board(page, 'data-screen="route-query"')
+        self.assertIn('route-times', route)
+        self.assertIn('route-time-value', route)
+        doc = Markup()
+        doc.feed(route)
+        values = [a.get('class') for tag, a in doc.attrs if tag == 'b' and a.get('class') == 'route-time-value']
+        self.assertEqual(len(values), 4)
+        for token in ('08:30', '09:05', '09:10', '09:45'):
+            self.assertIn(token, route)
+
+    def test_tab_bar_styles_span_and_button_identically(self):
+        css = (ROOT / 'styles.css').read_text(encoding='utf-8')
+        self.assertIn('.ios-tab-bar button', css)
+        button_rule = css.split('.ios-tab-bar button{', 1)[1].split('}', 1)[0]
+        span_rule = css.split('.ios-tab-bar span{', 1)[1].split('}', 1)[0]
+        self.assertIn('flex:1', button_rule)
+        self.assertIn('background:transparent', button_rule)
+        self.assertIn('border:0', button_rule)
+        self.assertIn('font-size', button_rule)
+        self.assertIn('flex:1', span_rule)
+
+    def test_desktop_panel_buttons_are_normal_sized(self):
+        css = (ROOT / 'styles.css').read_text(encoding='utf-8')
+        self.assertNotIn('.desktop-panel button.primary,.desktop-panel button.secondary{display:block;width:100%}', css)
+        self.assertIn('.coupon-actions', css)
+
+    def test_coupon_create_is_single_full_page_form(self):
+        page = (ROOT / 'desktop.html').read_text(encoding='utf-8')
+        create = board(page, 'data-desktop-screen="coupon-create"')
+        self.assertIn('新增优惠券', create)
+        self.assertIn('基础规则', create)
+        self.assertIn('*所属项目', create)
+        self.assertIn('*可用商户', create)
+        self.assertIn('*优惠券名称', create)
+        self.assertIn('使用须知', create)
+        self.assertIn('保存并发布', create)
+        self.assertIn('>取消</button>', create)
+        self.assertNotIn('desktop-form-grid', create)
+        doc = Markup()
+        doc.feed(create)
+        self.assertEqual(sum(a.get('data-action') == 'draft' for tag, a in doc.attrs), 1)
+        self.assertEqual(sum(a.get('data-action') == 'publish' for tag, a in doc.attrs), 1)
+        self.assertEqual(sum(a.get('data-nav') == 'coupon-list' for tag, a in doc.attrs), 2)
+        for label in ('归属项目', '归属商家', '优惠券图片', '折扣值', '优惠券状态', '优惠券名称', '金卡会员兑换积分'):
+            self.assertIn(label, page)
+
+
 class Business(unittest.TestCase):
     def test_date_selection_is_used_when_booking(self):
         result = run_model(

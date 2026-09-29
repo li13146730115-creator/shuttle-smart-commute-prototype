@@ -288,6 +288,8 @@
       }
     } else if (action === 'draft' || action === 'publish') {
       status((action === 'draft' ? '草稿已模拟保存' : '优惠券已模拟发布') + '；无真实后台写入，刷新页面后重置。');
+    } else if (action === 'cancel-create') {
+      show('coupon-list');
     } else if (action === 'view-coupons') {
       status('已加载当前园区优惠券（演示数据）；未连接真实后台。');
     } else if (action === 'add-coupon') {
